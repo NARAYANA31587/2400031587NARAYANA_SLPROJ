@@ -20,7 +20,7 @@
   <div class="guide-step"><b>1</b><span><strong>Enter student details</strong><small>Student ID and full name.</small></span></div>
   <div class="guide-step"><b>2</b><span><strong>Look at the camera</strong><small>Keep one face centered inside the oval guide.</small></span></div>
   <div class="guide-step"><b>3</b><span><strong>Click Enroll Student</strong><small>The browser takes 5 photos from the preview in about 2 seconds.</small></span></div>
-  <div class="notice">Photos are saved on the app server under <code>data/faces/{student_id}</code> (or its configured persistent data directory). Existing samples are kept when the same ID is enrolled again. Face detection is not required just to save the samples.</div>
+  <div class="notice">Photos are saved on the app server under <code>data/faces/{student_id}</code>. On free hosts, server storage may be temporary and samples can be lost after a restart or redeploy. Face detection is not required just to save the samples.</div>
 </article>
 </section>
 {% endblock %}

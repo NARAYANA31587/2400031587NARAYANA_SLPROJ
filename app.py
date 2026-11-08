@@ -19,8 +19,15 @@ FACES_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SMARTATTEND_SECRET') or secrets.token_hex(32)
-app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Lax')
+app.secret_key = (os.environ.get('SECRET_KEY') or os.environ.get('SMARTATTEND_SECRET')
+                  or secrets.token_hex(32))
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=os.environ.get('SESSION_COOKIE_SECURE', '').lower()
+    in {'1', 'true', 'yes'},
+    MAX_CONTENT_LENGTH=12 * 1024 * 1024,
+)
 
 recognizer = None
 recognizer_ready = False
@@ -452,5 +459,5 @@ init_db()
 train_recognizer()
 
 if __name__ == '__main__':
-    app.run(host=os.environ.get('HOST', '127.0.0.1'),
+    app.run(host=os.environ.get('HOST', '0.0.0.0'),
             port=int(os.environ.get('PORT', '5001')), debug=False, threaded=True)

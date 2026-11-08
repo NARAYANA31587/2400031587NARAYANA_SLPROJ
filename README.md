@@ -32,7 +32,7 @@ If macOS asks for camera access, allow it for the terminal/VS Code process and r
 - Kiosk: live face-recognition stream only; no student list or attendance report endpoints are exposed in the kiosk UI.
 - Students: no login or write access to attendance records.
 
-Passwords are stored using Werkzeug password hashing. Authenticated POST requests use a session CSRF token. Session cookies are HttpOnly and SameSite=Lax. Set a long random `SMARTATTEND_SECRET` environment variable for a persistent deployment; the default generated secret changes on restart, which signs users out.
+Passwords are stored using Werkzeug password hashing. Authenticated POST requests use a session CSRF token. Session cookies are HttpOnly and SameSite=Lax. Set `SECRET_KEY` (or the legacy `SMARTATTEND_SECRET`) to a long random value; the default generated secret changes on restart, which signs users out.
 
 ## Important prototype limitations
 
@@ -57,3 +57,34 @@ The sample capture step is intentionally independent of Haar face detection so a
 ## Windows 10 / 11 setup
 
 See [`WINDOWS_SETUP.md`](WINDOWS_SETUP.md) for the full Windows instructions. The quickest option is to install Python 3.11 or 3.12 (64-bit), then double-click `run_windows.bat` from this project folder. Once Flask starts, open `http://127.0.0.1:5001` in Chrome or Edge. Keep the terminal open while using the site; press `Ctrl+C` to stop it.
+
+
+## Free Render deployment
+
+The root `render.yaml` configures a free Render web service and GitHub Blueprint deployment. It uses `pip install -r requirements.txt` to build and Gunicorn to serve the Flask `app` object on Render's `PORT` at `0.0.0.0`. Python 3.12 is selected for the OpenCV contrib wheels.
+
+1. Push the project to a GitHub repository. The `.gitignore` excludes `.venv/`, `data/`, SQLite files, face samples, and local secrets; check `git status` before every push.
+2. In Render, choose **New → Blueprint**, connect the repository, and select the branch containing `render.yaml`.
+3. Review the Blueprint and choose the **Free** instance. Do not add a paid disk or other paid resources.
+4. Deploy, then use the generated HTTPS `onrender.com` address. Create the first admin at `/setup`.
+
+Render's free service has an ephemeral filesystem and may sleep when idle. Its SQLite database and enrolled face images may be lost on restart or redeploy. The app supports configuring `SMARTATTEND_DATA_DIR` and `SMARTATTEND_DB` for a future persistent location, but the free Render plan does not provide persistent disk. Use test data only; do not rely on this free deployment for permanent attendance records or real biometric data.
+
+The browser obtains camera permission over the deployed HTTPS origin and sends frames to the app for OpenCV/LBPH recognition. Render has no access to a webcam attached to your laptop; server-side `cv2.VideoCapture` is not used by the hosted kiosk. Recognition and attendance are therefore best-effort on a sleeping free service and require a responsive app instance.
+
+For manual service setup instead of the Blueprint:
+
+- Build command: `pip install -r requirements.txt`
+- Start command: `gunicorn --workers 1 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT app:app`
+- Instance: **Free**
+- Python: **3.12**
+
+The `app:app` suffix points Gunicorn to the Flask `app` object; the explicit bind is required for Render to route public traffic to the service.
+
+Environment variables:
+
+- `SECRET_KEY`: Render generates a value from the Blueprint; keep it private.
+- `SESSION_COOKIE_SECURE`: `true` for the HTTPS hosted site.
+- `PORT`: set by Render; do not hardcode it.
+- `SMARTATTEND_DATA_DIR`: optional path for face samples; defaults to the project `data/` directory.
+- `SMARTATTEND_DB`: optional SQLite database path; defaults to `SMARTATTEND_DATA_DIR/smartattend.db`.

@@ -1,0 +1,7 @@
+.kiosk-camera{position:relative;overflow:hidden}
+.kiosk-camera-view{position:relative;width:100%;aspect-ratio:4/3;background:#101827}
+.kiosk-camera-view video,.kiosk-camera-view canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+.kiosk-camera-view canvas{pointer-events:none}
+.kiosk-camera-status{min-height:20px;margin:10px 0;color:#16845d;font-size:12px;font-weight:700}
+.kiosk-camera-status[data-state=unknown]{color:#c58124}
+.kiosk-camera-status[data-state=error]{color:#b84d46}

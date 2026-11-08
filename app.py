@@ -1,4 +1,4 @@
-import os, csv, time, sqlite3, secrets, shutil, threading, sys, base64
+import os, csv, time, sqlite3, secrets, shutil, base64
 from io import StringIO
 from pathlib import Path
 from datetime import datetime, date
@@ -6,23 +6,22 @@ from functools import wraps
 
 import cv2
 import numpy as np
-from flask import (Flask, Response, abort, flash, redirect, render_template,
+from flask import (Flask, abort, flash, redirect, render_template,
                    request, session, url_for, make_response, jsonify)
 from werkzeug.security import generate_password_hash, check_password_hash
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / 'data'
+DATA_DIR = Path(os.environ.get('SMARTATTEND_DATA_DIR', BASE_DIR / 'data')).resolve()
 FACES_DIR = DATA_DIR / 'faces'
 DB_PATH = Path(os.environ.get('SMARTATTEND_DB', DATA_DIR / 'smartattend.db'))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 FACES_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SMARTATTEND_SECRET') or secrets.token_hex(32)
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Lax')
 
-camera = None
-camera_lock = threading.RLock()
 recognizer = None
 recognizer_ready = False
 recognizer_label_to_id = {}
@@ -106,20 +105,6 @@ def inject_globals():
             'current_role': session.get('role')}
 
 
-def get_camera():
-    global camera
-    with camera_lock:
-        if camera is None or not camera.isOpened():
-            if os.name == 'nt':
-                camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-            else:
-                backend = getattr(cv2, 'CAP_AVFOUNDATION', cv2.CAP_ANY) if sys.platform == 'darwin' else cv2.CAP_ANY
-                camera = cv2.VideoCapture(0, backend)
-            if not camera.isOpened():
-                camera = cv2.VideoCapture(0)
-        return camera
-
-
 def train_recognizer():
     global recognizer, recognizer_ready, recognizer_label_to_id
     global recognizer_attempted, recognizer_status
@@ -175,51 +160,42 @@ def mark_attendance(student_id):
         return cur.rowcount == 1
 
 
-def camera_frames():
-    global recognizer_ready
-    while True:
-        cap = get_camera()
-        with camera_lock:
-            ok, frame = cap.read()
-        if not ok:
-            frame = np.zeros((480, 800, 3), dtype=np.uint8)
-            cv2.putText(frame, 'Camera unavailable - check browser/OS permissions', (22, 240),
-                        cv2.FONT_HERSHEY_SIMPLEX, .7, (240, 240, 240), 2)
+def recognize_frame(frame):
+    if not recognizer_attempted:
+        train_recognizer()
+    if FACE_CASCADE.empty():
+        return {'ready': False, 'message': recognizer_status, 'faces': []}
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    found = FACE_CASCADE.detectMultiScale(gray, 1.15, 5, minSize=(60, 60))
+    results = []
+    for x, y, w, h in found:
+        result = {
+            'box': [x / frame.shape[1], y / frame.shape[0],
+                    w / frame.shape[1], h / frame.shape[0]],
+            'label': 'Unknown · not marked',
+            'status': 'unknown',
+        }
+        if not recognizer_ready or recognizer is None:
+            result.update(label='Recognition unavailable', status='unavailable')
         else:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            try:
-                faces = FACE_CASCADE.detectMultiScale(gray, 1.15, 5, minSize=(60, 60)) if not FACE_CASCADE.empty() else ()
-            except cv2.error:
-                faces = ()
-            if not recognizer_attempted:
-                train_recognizer()
-            if not recognizer_ready:
-                cv2.putText(frame, 'FACE RECOGNITION UNAVAILABLE', (22, 32),
-                            cv2.FONT_HERSHEY_SIMPLEX, .7, (40, 40, 230), 2)
-                cv2.putText(frame, recognizer_status[:90], (22, 60),
-                            cv2.FONT_HERSHEY_SIMPLEX, .48, (40, 40, 230), 1)
-            for (x, y, w, h) in faces:
-                label_text, color = 'Unknown · not marked', (0, 165, 255)
-                if not recognizer_ready:
-                    label_text, color = 'Recognition unavailable', (40, 40, 230)
-                else:
-                    try:
-                        label, confidence = recognizer.predict(cv2.resize(gray[y:y+h, x:x+w], (160, 160)))
-                        sid = recognizer_label_to_id.get(label)
-                        if sid and confidence < 65:
-                            with connect_db() as conn:
-                                student = conn.execute('SELECT name FROM students WHERE student_id=?', (sid,)).fetchone()
-                            if student:
-                                label_text, color = f"{student['name']} · {sid}", (70, 205, 130)
-                                mark_attendance(sid)
-                    except (cv2.error, sqlite3.Error):
-                        pass
-                cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
-                cv2.putText(frame, label_text[:48], (x, max(22, y-10)), cv2.FONT_HERSHEY_SIMPLEX, .52, color, 2)
-        ok, encoded = cv2.imencode('.jpg', frame)
-        if ok:
-            yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + encoded.tobytes() + b'\r\n'
-        time.sleep(.06)
+            label, confidence = recognizer.predict(
+                cv2.resize(gray[y:y+h, x:x+w], (160, 160)))
+            sid = recognizer_label_to_id.get(label)
+            if sid and confidence < 65:
+                with connect_db() as conn:
+                    student = conn.execute(
+                        'SELECT name FROM students WHERE student_id=?', (sid,)
+                    ).fetchone()
+                if student:
+                    result.update(label=f"{student['name']} · {sid}", status='recognized')
+                    mark_attendance(sid)
+        results.append(result)
+    return {
+        'ready': recognizer_ready,
+        'message': recognizer_status if not recognizer_ready else 'Ready',
+        'faces': results,
+    }
 
 
 def attendance_rows(start=None, end=None, search=''):
@@ -366,9 +342,33 @@ def enroll_browser_capture():
 def kiosk():
     return render_template('kiosk.html')
 
-@app.route('/camera')
-def camera_page():
-    return Response(camera_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+@app.route('/camera/frame', methods=['POST'])
+def camera_frame():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(ok=False, message='Send a camera frame as JSON.'), 400
+    data_url = payload.get('frame')
+    if not isinstance(data_url, str) or len(data_url) > 2_000_000:
+        return jsonify(ok=False, message='Camera frame is missing or too large.'), 400
+    try:
+        encoded = data_url.split(',', 1)[1] if ',' in data_url else data_url
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, base64.binascii.Error):
+        return jsonify(ok=False, message='Camera frame is invalid.'), 400
+    frame = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if frame is None or frame.size == 0 or frame.shape[0] * frame.shape[1] > 1_000_000:
+        return jsonify(ok=False, message='Camera frame could not be decoded.'), 400
+    try:
+        result = recognize_frame(frame)
+    except (cv2.error, sqlite3.Error):
+        app.logger.exception('Could not process kiosk camera frame')
+        return jsonify(ok=False, message='Face recognition failed. Please try again.'), 503
+    return jsonify(ok=True, **result)
+
+
+@app.route('/healthz')
+def health_check():
+    return jsonify(ok=True)
 
 
 @app.route('/attendance')
@@ -448,7 +448,9 @@ def audit_page():
 def forbidden(_): return render_template('message.html', title='Access restricted', message='Your account does not have permission to open this page.'),403
 
 
+init_db()
+train_recognizer()
+
 if __name__ == '__main__':
-    init_db()
-    train_recognizer()
-    app.run(host='127.0.0.1', port=int(os.environ.get('PORT','5001')), debug=False, threaded=True)
+    app.run(host=os.environ.get('HOST', '127.0.0.1'),
+            port=int(os.environ.get('PORT', '5001')), debug=False, threaded=True)

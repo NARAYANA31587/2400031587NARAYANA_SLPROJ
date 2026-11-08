@@ -1,1 +1,129 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Attendance kiosk · SmartAttendAI</title><link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}"></head><body class="kiosk-page"><header class="kiosk-header"><a class="brand" href="{{ url_for('login') }}"><img class="brand-icon brand-image" src="{{ url_for('static',filename='smartattend-mark.png') }}" alt="SmartAttendAI face recognition logo"><span>SmartAttend<span class="accent">AI</span><small>ATTENDANCE KIOSK</small></span></a><span class="kiosk-live"><i></i> KIOSK MODE</span><a href="{{ url_for('login') }}" class="text-link">Faculty sign in ↗</a></header><main class="kiosk-content"><p class="eyebrow">CONTACTLESS CHECK-IN</p><h1>Look at the camera.<br><em>You're checked in.</em></h1><p class="muted">Stand in front of the camera. Recognized students are marked present automatically for today.</p><div class="kiosk-camera"><img src="{{ url_for('camera_page') }}" alt="Live face recognition camera"><div class="camera-overlay"><span>● LIVE CAMERA</span><small>Green = recognized · Orange = unknown · Red = recognition unavailable</small></div></div><p class="kiosk-note">This kiosk does not display student lists or attendance records. If recognition fails, contact faculty for manual verification.</p></main></body></html>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Attendance kiosk · SmartAttendAI</title>
+  <link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static',filename='kiosk-camera.css') }}">
+</head>
+<body class="kiosk-page">
+  <header class="kiosk-header">
+    <a class="brand" href="{{ url_for('login') }}">
+      <img class="brand-icon brand-image" src="{{ url_for('static',filename='smartattend-mark.png') }}" alt="SmartAttendAI face recognition logo">
+      <span>SmartAttend<span class="accent">AI</span><small>ATTENDANCE KIOSK</small></span>
+    </a>
+    <span class="kiosk-live"><i></i> KIOSK MODE</span>
+    <a href="{{ url_for('login') }}" class="text-link">Faculty sign in ↗</a>
+  </header>
+  <main class="kiosk-content">
+    <p class="eyebrow">CONTACTLESS CHECK-IN</p>
+    <h1>Look at the camera.<br><em>You're checked in.</em></h1>
+    <p class="muted">Stand in front of the camera. Recognized students are marked present automatically for today.</p>
+    <div class="kiosk-camera">
+      <div class="kiosk-camera-view">
+        <video id="kiosk-video" autoplay muted playsinline></video>
+        <canvas id="face-overlay"></canvas>
+      </div>
+      <div class="camera-overlay">
+        <span>● LIVE CAMERA</span>
+        <small>Green = recognized · Orange = unknown · Red = recognition unavailable</small>
+      </div>
+    </div>
+    <p class="kiosk-camera-status" id="camera-status" role="status" aria-live="polite">Starting camera…</p>
+    <p class="kiosk-note">Camera frames are sent to this attendance server for recognition and are not saved by the kiosk. Enrolled face samples are stored on the server's persistent disk. This kiosk does not display student lists or attendance records.</p>
+  </main>
+  <script>
+  (() => {
+    const video = document.getElementById('kiosk-video');
+    const cameraView = document.querySelector('.kiosk-camera-view');
+    const overlay = document.getElementById('face-overlay');
+    const status = document.getElementById('camera-status');
+    const context = overlay.getContext('2d');
+    const capture = document.createElement('canvas');
+    const captureContext = capture.getContext('2d');
+    const csrf = {{ csrf_token|tojson }};
+    let stream = null;
+    let busy = false;
+    let timer = null;
+    const colors = {recognized: '#46cd82', unknown: '#ffa500', unavailable: '#e64b4b'};
+
+    async function recognizeNextFrame() {
+      if (busy || video.readyState < 2) return;
+      busy = true;
+      try {
+        const scale = Math.min(1, 640 / video.videoWidth);
+        capture.width = Math.round(video.videoWidth * scale);
+        capture.height = Math.round(video.videoHeight * scale);
+        overlay.width = video.videoWidth;
+        overlay.height = video.videoHeight;
+        captureContext.drawImage(video, 0, 0, capture.width, capture.height);
+        const response = await fetch('{{ url_for("camera_frame") }}', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+          body: JSON.stringify({frame: capture.toDataURL('image/jpeg', 0.75)})
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.message || 'Recognition request failed.');
+        context.clearRect(0, 0, overlay.width, overlay.height);
+        if (!data.ready) {
+          status.textContent = data.message || 'Face recognition is unavailable.';
+          status.dataset.state = 'error';
+          return;
+        }
+        const faces = data.faces || [];
+        status.textContent = faces.length
+          ? faces.find(face => face.status === 'recognized')?.label || 'Face detected · not recognized'
+          : 'No face detected. Center your face and improve the lighting.';
+        status.dataset.state = faces.some(face => face.status === 'recognized') ? 'ready' : 'unknown';
+        for (const face of faces) {
+          const [x, y, width, height] = face.box;
+          const left = x * overlay.width;
+          const top = y * overlay.height;
+          const boxWidth = width * overlay.width;
+          const boxHeight = height * overlay.height;
+          context.strokeStyle = colors[face.status] || colors.unknown;
+          context.lineWidth = Math.max(3, overlay.width / 240);
+          context.strokeRect(left, top, boxWidth, boxHeight);
+          context.font = `bold ${Math.max(16, overlay.width / 32)}px sans-serif`;
+          context.fillStyle = context.strokeStyle;
+          context.fillText(face.label, left, Math.max(22, top - 8));
+        }
+      } catch (error) {
+        status.textContent = error.message || 'Could not process camera frame.';
+        status.dataset.state = 'error';
+      } finally {
+        busy = false;
+      }
+    }
+
+    async function startCamera() {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error('Camera access requires HTTPS or localhost in a supported browser.');
+        }
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {facingMode: 'user', width: {ideal: 640}, height: {ideal: 480}},
+          audio: false
+        });
+        video.srcObject = stream;
+        await video.play();
+        cameraView.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+        status.textContent = 'Camera ready. Looking for a face…';
+        status.dataset.state = 'ready';
+        timer = window.setInterval(recognizeNextFrame, 700);
+      } catch (error) {
+        status.textContent = error.message || 'Allow camera access, then reload this page.';
+        status.dataset.state = 'error';
+      }
+    }
+
+    startCamera();
+    window.addEventListener('beforeunload', () => {
+      if (timer) window.clearInterval(timer);
+      if (stream) stream.getTracks().forEach(track => track.stop());
+    });
+  })();
+  </script>
+</body>
+</html>

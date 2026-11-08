@@ -57,3 +57,18 @@ The sample capture step is intentionally independent of Haar face detection so a
 ## Windows 10 / 11 setup
 
 See [`WINDOWS_SETUP.md`](WINDOWS_SETUP.md) for the full Windows instructions. The quickest option is to install Python 3.11 or 3.12 (64-bit), then double-click `run_windows.bat` from this project folder. Once Flask starts, open `http://127.0.0.1:5001` in Chrome or Edge. Keep the terminal open while using the site; press `Ctrl+C` to stop it.
+
+
+## Always-on hosted deployment (Render)
+
+The app can be deployed as an always-on Render web service using the included `render.yaml` Blueprint. The service uses a persistent disk at `/var/data` for its SQLite database and newly enrolled face samples. The service plan and persistent disk are paid resources; hosting cannot be guaranteed to remain online forever.
+
+1. Push this project to GitHub and sign in to [Render](https://dashboard.render.com/).
+2. Select **New → Blueprint**, connect the GitHub repository, and select the `main` branch.
+3. Review the Blueprint resources and their current prices, then apply it. Do not select a free/sleeping service for attendance use.
+4. Wait for the first deploy to finish and open the generated `onrender.com` address over HTTPS.
+5. Create the first admin account at `/setup`, sign in, and enroll students with their informed consent.
+
+The deployed database starts empty: the local `data/` directory, database, and face images are excluded from Git and are not uploaded. The kiosk uses the check-in device's browser camera; camera frames are sent to the app for recognition, while enrolled samples and attendance records are saved on the persistent disk. Protect access to the site and follow your institution's consent and biometric-data policies. Keep independent backups; a persistent disk is not a backup.
+
+Render's persistent disks are attached to a single service instance, so this configuration is intended for one app instance and should not be scaled horizontally.

@@ -11,7 +11,7 @@
       <div class="enroll-preview"><video id="enroll-video" autoplay muted playsinline style="display:block;width:100%;min-height:190px;max-height:290px;object-fit:cover;transform:scaleX(-1)"></video><div class="preview-guide">Keep face inside oval</div></div>
       <p class="preview-help" id="capture-help">Allow camera access when your browser asks. Keep your face centered and look at the lens.</p>
     </div>
-    <div class="consent-note">ⓘ Confirm that the student has been informed and has consented to local face-sample storage.</div>
+    <div class="consent-note">ⓘ Confirm that the student has been informed and has consented to face-sample storage on this app's server.</div>
     <button type="submit" class="btn primary full" id="capture-button">Enroll Student <span>→</span></button>
     <p class="preview-help" id="enroll-result" role="status" aria-live="polite"></p>
   </form>
@@ -20,7 +20,7 @@
   <div class="guide-step"><b>1</b><span><strong>Enter student details</strong><small>Student ID and full name.</small></span></div>
   <div class="guide-step"><b>2</b><span><strong>Look at the camera</strong><small>Keep one face centered inside the oval guide.</small></span></div>
   <div class="guide-step"><b>3</b><span><strong>Click Enroll Student</strong><small>The browser takes 5 photos from the preview in about 2 seconds.</small></span></div>
-  <div class="notice">Photos are saved locally under <code>data/faces/{student_id}</code>. Existing samples are kept when the same ID is enrolled again. Face detection is not required just to save the samples.</div>
+  <div class="notice">Photos are saved on the app server under <code>data/faces/{student_id}</code> (or its configured persistent data directory). Existing samples are kept when the same ID is enrolled again. Face detection is not required just to save the samples.</div>
 </article>
 </section>
 {% endblock %}
